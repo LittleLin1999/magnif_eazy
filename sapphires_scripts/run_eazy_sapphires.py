@@ -8,53 +8,60 @@ Author: Xiaojing Lin
 GitHub: Littlelin1999@gmail.com
 Date: 2024-11-11 15:32:27
 LastEditors: LittleLin1999 littlelin1999@gmail.com
-LastEditTime: 2024-11-11 15:37:45
+LastEditTime: 2024-11-11 17:02:40
 '''
  
 
 import glob
 import os
-from astropy.io import fits
 import numpy as np
-import multiprocessing  
-from astropy.table import Table, vstack
+ 
+from astropy.table import Table 
 import astropy.units as u
-from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon
-from photutils.aperture import EllipticalAperture, CircularAperture, aperture_photometry
 
-import tqdm
 
 import eazy, astropy
 import eazy.hdf5
 
 import time
-
-from scipy.integrate import cumtrapz
-
  
+# input and output  
 phot_cat_fname = '/data/sapphires/catalogs/4750_v03_merged_phot.fits'
 rootname = f'4750_v03'
-
 output_dir = '/home/lxj/data/SAPPHIRE_EAZY/' + rootname
+
+
+# the code should be run in the output_dir, where templates for the EAZY will be generated
+os.makedirs(output_dir, exist_ok=True)
+os.chdir(output_dir)
+
+# config
+template_Hainline_path = '/home/lxj/magnif_eazy/template_Hainline/'
+eazy_photz_path = '/home/lxj/anaconda3/envs/jwst/lib/python3.12/site-packages/eazy/data/'
+
+
 
 ###----------------- EAZY -----------------####
 sexcat = Table.read(phot_cat_fname)
 
-for suffix in ['CIRC1', 'KRON_S']: 
+for phot_suffix in ['CIRC1', 'KRON_S']: 
 
     #----------------- EAZY format -----------------
 
     eazy_tab = Table()
-    eazy_tab['ID'] = sexcat['ID']
+    eazy_tab['id'] = sexcat['ID']
     eazy_tab['RA'] = sexcat['RA']
     eazy_tab['DEC'] = sexcat['DEC']
+
+    ra_center = np.nanmedian(sexcat['RA'])
+    dec_center = np.nanmedian(sexcat['DEC'])
  
     for colname in sexcat.colnames:
-        if colname.endswith(f'_{suffix}'): 
+        if colname.endswith(f'_{phot_suffix}'): 
             print('Loading', colname)
 
-            err_colname = colname.replace(f'_{suffix}', f'_{suffix}_e')
-            en_colname = colname.replace(f'_{suffix}', f'_{suffix}_en')
+            err_colname = colname.replace(f'_{phot_suffix}', f'_{phot_suffix}_e')
+            en_colname = colname.replace(f'_{phot_suffix}', f'_{phot_suffix}_en')
 
             ### use the maximum of the two errors
             used_err_colvalue = np.nanmax([sexcat[err_colname].data, sexcat[en_colname].data], axis=0)
@@ -69,49 +76,51 @@ for suffix in ['CIRC1', 'KRON_S']:
             e[f == 0] = np.nan
             f[f == 0] = np.nan
 
+            eazy_tab['f_{0}'.format(filt)] = np.nan_to_num(f, nan = -999999., posinf=-999999., neginf=-999999.)
+            eazy_tab['e_{0}'.format(filt)] = np.nan_to_num(e, nan = -999999., posinf=-999999., neginf=-999999.)
 
-            eazy_tab['f_{0}'.format(filt)] = np.nan_to_num(f, nan = -999999.)
-            eazy_tab['e_{0}'.format(filt)] = np.nan_to_num(e, nan = -999999.)
-
-    eazy_catname = os.path.join(output_dir, f'{rootname}.eazy.cat')
+            # if is masked array, fill the masked value with -999999.
+            if hasattr(eazy_tab['f_{0}'.format(filt)], 'filled'):
+                eazy_tab['f_{0}'.format(filt)] = eazy_tab['f_{0}'.format(filt)].filled(-999999.)
+            if hasattr(eazy_tab['e_{0}'.format(filt)], 'filled'):
+                eazy_tab['e_{0}'.format(filt)] = eazy_tab['e_{0}'.format(filt)].filled(-999999.)
+ 
+    eazy_catname = os.path.join(output_dir, f'{rootname}_{phot_suffix}.eazy.cat')
     eazy_tab.write(eazy_catname, format='ascii', overwrite=True)
 
 
     # ----------------- Run EAZY -----------------
-    if  os.path.exists('templates'): os.system('rm -rf templates')
-    if (not os.path.exists('templates/template_Hainline')):
-            # generate the template file based on Hailine et al. 2023
-            template_seds = glob.glob('/home/lxj/data/JWST_Photometry/MAGNIF/template_Hainline/*.sed')
+    # generate the template file based on Hailine et al. 2023
+    template_seds = glob.glob(os.path.join(template_Hainline_path, '*.sed') )
 
-            # sorted by row number
-            nrow_seds = [len(np.genfromtxt(s)) for s in template_seds]
-            order = np.argsort(nrow_seds)[::-1]
-            template_seds = np.array(template_seds)[order]
-            template_seds = list(template_seds[-8:]) + list(template_seds[:-8])
-            ### let the 2818 grid template be the first one
-            ### if the first too sparse / too fine ==> leading to interpolation abnormals
+    # sorted by row number
+    nrow_seds = [len(np.genfromtxt(s)) for s in template_seds]
+    order = np.argsort(nrow_seds)[::-1]
+    template_seds = np.array(template_seds)[order]
+    template_seds = list(template_seds[-8:]) + list(template_seds[:-8])
+    ### let the 2818 grid template be the first one
+    ### if the first too sparse / too fine ==> leading to interpolation abnormals
 
-            template_sed_tab = Table()
-            template_sed_tab['id'] = np.arange(1, len(template_seds)+1)
-            template_sed_tab['file'] = np.array(['templates/template_Hainline/' + os.path.basename(s) for s in template_seds])
-            template_sed_tab['Lambda_conv'] = 1.0
-            template_age = np.zeros(len(template_seds))
-            # template_age[9] = 0.025
-            # template_age[10] = 0.005
-            template_sed_tab['Age'] = template_age
-            template_sed_tab['Template_err'] = 1.0
-            astropy.io.ascii.write(template_sed_tab,'/home/lxj/data/JWST_Photometry/MAGNIF/template_Hainline/template_Hainline.param', format="no_header", overwrite=True)
+    template_sed_tab = Table()
+    template_sed_tab['id'] = np.arange(1, len(template_seds)+1)
+    template_sed_tab['file'] = np.array(['templates/template_Hainline/' + os.path.basename(s) for s in template_seds])
+    template_sed_tab['Lambda_conv'] = 1.0
+    template_age = np.zeros(len(template_seds))
+    # template_age[9] = 0.025
+    # template_age[10] = 0.005
+    template_sed_tab['Age'] = template_age
+    template_sed_tab['Template_err'] = 1.0
+    astropy.io.ascii.write(template_sed_tab, os.path.join(template_Hainline_path, 'template_Hainline.param'), 
+                            format="no_header", overwrite=True)
+    os.system(f'cp -r {template_Hainline_path} {os.path.join(eazy_photz_path, "templates")}')
 
-            #os.system('cp template_Hainline.param /home/lxj/data/JWST_Photometry/MAGNIF/template_Hainline/')
 
-            os.system('cp -r template_Hainline /home/lxj/jwst/eazy-photoz/templates/')
-            
-            # eazy.symlink_eazy_inputs()
-            # os.system('rm -rf templates')
-            # os.symlink('/home/lxj/jwst/eazy-photoz/templates/', 'templates')
+    ### reset
     os.system('rm -rf templates')
     os.system('rm FILTER.RES.latest')
-    eazy.symlink_eazy_inputs(path='/home/lxj/jwst/eazy-photoz/')        
+
+    ### soft link of the templates
+    eazy.symlink_eazy_inputs(path=eazy_photz_path)
 
 
 
@@ -119,26 +128,26 @@ for suffix in ['CIRC1', 'KRON_S']:
     params = {}
 
     ## Filters 
-    params['FILTERS_RES'] = '/home/lxj/jwst/eazy-photoz/filters/FILTER.RES.latest'
+    params['FILTERS_RES'] = os.path.join(eazy_photz_path, 'filters/FILTER.RES.latest')
 
     ### Templates
-    params['TEMPLATES_FILE'] = '/home/lxj/jwst/eazy-photoz/templates/template_Hainline/template_Hainline.param'
-    #'/home/lxj/jwst/eazy-photoz/templates/sfhz/corr_sfhz_13.param'   
-    #'/home/lxj/jwst/eazy-photoz/templates/template_Hainline/template_Hainline.param'
+    params['TEMPLATES_FILE'] = os.path.join(eazy_photz_path,'templates/template_Hainline/template_Hainline.param')
+    #'templates/sfhz/corr_sfhz_13.param'   
+    #'templates/template_Hainline/template_Hainline.param'
 
-    params['TEMP_ERR_FILE'] = '/home/lxj/jwst/eazy-photoz/templates/TEMPLATE_ERROR.v2.0.zfourge'
-    # '/home/lxj/jwst/eazy-photoz/templates/TEMPLATE_ERROR.eazy_v1.0'
-    #'/home/lxj/jwst/eazy-photoz/templates/TEMPLATE_ERROR.v2.0.zfourge'
-    #'/home/lxj/jwst/eazy-photoz/templates/template_error_cosmos2020.txt'
+    params['TEMP_ERR_FILE'] = os.path.join(eazy_photz_path,'templates/TEMPLATE_ERROR.v2.0.zfourge')
+    # 'templates/TEMPLATE_ERROR.eazy_v1.0'
+    #'templates/TEMPLATE_ERROR.v2.0.zfourge'
+    #'templates/template_error_cosmos2020.txt'
     
-    params['MW_EBV'] = eazy.utils.get_irsa_dust( field_center[field][0], field_center[field][1]) # center of the field
+    params['MW_EBV'] = eazy.utils.get_irsa_dust( ra_center, dec_center) # center of the field
     params['CAT_HAS_EXTCORR'] = 'n'
 
     ## Input Files
     params['CATALOG_FILE'] = eazy_catname
     params['CATALOG_FORMAT'] = 'ascii'
-    params['OUTPUT_DIRECTORY'] = '/home/lxj/data/JWST_Photometry/MAGNIF/catalog/'
-    params['MAIN_OUTPUT_FILE'] = f'{rootname}.eazy'
+    params['OUTPUT_DIRECTORY'] = output_dir
+    params['MAIN_OUTPUT_FILE'] = f'{rootname}_{phot_suffix}.eazy'
     params['PRINT_ERRORS'] = 'y'
     params['NOT_OBS_THRESHOLD'] = -90
 
@@ -155,7 +164,7 @@ for suffix in ['CIRC1', 'KRON_S']:
 
 
 
-    translate_file = '/home/lxj/data/JWST_Photometry/eazy_translate.txt' # https://eazy-py.readthedocs.io/en/latest/eazy/filters.html
+    translate_file = '/home/lxj/magnif_eazy/eazy_translate.txt' # https://eazy-py.readthedocs.io/en/latest/eazy/filters.html
 
 
     # RUN EAZY
@@ -177,7 +186,7 @@ for suffix in ['CIRC1', 'KRON_S']:
         clip &= F200W_sn > 5
         
         ez.iterate_zp_templates(idx=ez.idx[clip], update_templates=False, 
-                                update_zeropoints=True, iter=iter, n_proc=128, 
+                                update_zeropoints=True, iter=iter, n_proc=20, 
                                 save_templates=False, error_residuals=False, 
                                 NBIN=NBIN, get_spatial_offset=False,
                                 )
@@ -186,7 +195,7 @@ for suffix in ['CIRC1', 'KRON_S']:
     ez.set_sys_err(positive=False)
 
     # fit_parallel renamed to fit_catalog 14 May 2021
-    ez.fit_catalog(ez.idx, n_proc=128)
+    ez.fit_catalog(ez.idx, n_proc=20)
     
 
     # Write out the results
@@ -241,9 +250,9 @@ for suffix in ['CIRC1', 'KRON_S']:
                                     'z_2p5': '2.5th percentile of the redshift probability distribution',
                                     'z_97p5': '97.5th percentile of the redshift probability distribution',}
     eazy_photz.meta['comment'] =  ['EAZY template from Hainline et al. 2023',
-                                                f'Photometry catalog: MAGNIF {field} {tmp_version}',
+                                                f'Photometry catalog: {phot_cat_fname}',
                                                 'Photometry type: CIRC1',
                                                 'Processed by eazy-py',
-                                                'Produced by X.Lin and F.Sun for the MAGNIF project on %s' % (time.strftime('%Y-%m-%d'))]
+                                                'Produced by X.Lin and F.Sun for the SAPPHIRES project on %s' % (time.strftime('%Y-%m-%d'))]
                                     
-    eazy_photz.write(f'MAGNIF_{field}_{suffix}_{tmp_version}_EAZY_photz.ecsv', format='ascii.ecsv', overwrite=True)
+    eazy_photz.write(f'{rootname}_{phot_suffix}_EAZY_photz.ecsv', format='ascii.ecsv', overwrite=True)
