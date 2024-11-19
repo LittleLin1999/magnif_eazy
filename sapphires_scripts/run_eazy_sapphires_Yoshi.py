@@ -8,7 +8,7 @@ Author: Xiaojing Lin
 GitHub: Littlelin1999@gmail.com
 Date: 2024-11-11 15:32:27
 LastEditors: LittleLin1999 littlelin1999@gmail.com
-LastEditTime: 2024-11-18 17:26:10
+LastEditTime: 2024-11-18 17:16:20
 '''
  
 
@@ -26,8 +26,8 @@ import eazy.hdf5
 import time
  
 # input and output  
-phot_cat_fname = '/data/sapphires/catalogs/4750_v03_merged_phot.fits'
-rootname = f'4750_v03'
+phot_cat_fname = '/data/sapphires/catalogs/SAPPHIRES_M0416_v0.5.fits'
+rootname = f'M0416_v0p5'
 output_dir = '/home/lxj/data/SAPPHIRE_EAZY/' + rootname
 
 
@@ -44,34 +44,35 @@ eazy_photz_path = '/home/lxj/anaconda3/envs/jwst/lib/python3.12/site-packages/ea
 ###----------------- EAZY -----------------####
 sexcat = Table.read(phot_cat_fname)
 
-for phot_suffix in ['CIRC1', 'KRON_S']: 
+# run for the two photometry types: 0.1" aperture and Kron_S (Rkron=1.2)
+for phot_suffix in ['aper1', 'Kron_S']: 
 
     #----------------- EAZY format -----------------
 
     eazy_tab = Table()
-    eazy_tab['id'] = sexcat['ID']
+    eazy_tab['id'] = sexcat['NUMBER'] # ID
     eazy_tab['RA'] = sexcat['RA']
     eazy_tab['DEC'] = sexcat['DEC']
 
+    # the center of the field (used for MW_EBV)
     ra_center = np.nanmedian(sexcat['RA'])
     dec_center = np.nanmedian(sexcat['DEC'])
  
     for colname in sexcat.colnames:
-        if colname.endswith(f'_{phot_suffix}'): 
+        if (colname.endswith(f'_{phot_suffix}')) and (colname.startswith('f_')): # flux columns 
             print('Loading', colname)
 
-            err_colname = colname.replace(f'_{phot_suffix}', f'_{phot_suffix}_e')
-            en_colname = colname.replace(f'_{phot_suffix}', f'_{phot_suffix}_en')
-
-            ### use the maximum of the two errors
-            used_err_colvalue = np.nanmax([sexcat[err_colname].data, sexcat[en_colname].data], axis=0)
-            
-            filt = colname.split('_')[0]
+            #### Yoshi's catalog only has the error from the err map and hasn't included the random errors 
+            #### so we only use one err
+            #### But if finally the random error is included, we should use the maximum of the two errors as the total error
             f = sexcat[colname].data
-            e = used_err_colvalue
+            e = sexcat['e' + colname[1:]].data
+      
+            filt = colname.split('_')[1]
+ 
             
 
-            ### add uncertainty floor: 0.05
+            #### add uncertainty floor: 0.05
             e = np.where( e < 0.05 * f , 0.05 *  f , e)
             e[f == 0] = np.nan
             f[f == 0] = np.nan
@@ -185,6 +186,7 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
         clip = (sn > 5).sum(axis=1) > 5
         clip &= F200W_sn > 5
         
+        
         ez.iterate_zp_templates(idx=ez.idx[clip], update_templates=False, 
                                 update_zeropoints=True, iter=iter, n_proc=20, 
                                 save_templates=False, error_residuals=False, 
@@ -253,6 +255,6 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
                                                 f'Photometry catalog: {phot_cat_fname}',
                                                 f'Photometry type: {phot_suffix}',
                                                 'Processed by eazy-py',
-                                                'Produced by X.Lin and F.Sun for the SAPPHIRES project on %s' % (time.strftime('%Y-%m-%d'))]
+                                                'Produced by X.Lin, Y.Fudamoto, F.Sun for the SAPPHIRES project on %s' % (time.strftime('%Y-%m-%d'))]
                                     
     eazy_photz.write(f'{rootname}_{phot_suffix}_EAZY_photz.ecsv', format='ascii.ecsv', overwrite=True)
