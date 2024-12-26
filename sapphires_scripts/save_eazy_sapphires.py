@@ -105,9 +105,9 @@ def save_eazy_h5(h5_file, clobber=True):
 
 if __name__ == '__main__':
 
-    h5_file = '/home/lxj/data/SAPPHIRE_EAZY/M0416_v0p5/M0416_v0p5_aper1.eazy.h5'
+    h5_file = '/home/lxj/data/SAPPHIRE_EAZY/4750_v052/4750_v052_CIRC1.eazy.h5'
     save_eazy_h5(h5_file, clobber=True)
 
-    h5_file = '/home/lxj/data/SAPPHIRE_EAZY/M0416_v0p5/M0416_v0p5_Kron_S.eazy.h5'
+    h5_file = '/home/lxj/data/SAPPHIRE_EAZY/4750_v052/4750_v052_KRON_S.eazy.h5'
     save_eazy_h5(h5_file, clobber=True)
     

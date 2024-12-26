@@ -8,7 +8,7 @@ Author: Xiaojing Lin
 GitHub: Littlelin1999@gmail.com
 Date: 2024-11-11 15:32:27
 LastEditors: LittleLin1999 littlelin1999@gmail.com
-LastEditTime: 2024-11-18 17:26:10
+LastEditTime: 2024-11-26 14:38:04
 '''
  
 
@@ -26,8 +26,8 @@ import eazy.hdf5
 import time
  
 # input and output  
-phot_cat_fname = '/data/sapphires/catalogs/4750_v03_merged_phot.fits'
-rootname = f'4750_v03'
+phot_cat_fname = '/data/sapphires/catalogs/4750_v052_merged_phot.fits'
+rootname = f'4750_v052'
 output_dir = '/home/lxj/data/SAPPHIRE_EAZY/' + rootname
 
 
@@ -64,8 +64,10 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
             en_colname = colname.replace(f'_{phot_suffix}', f'_{phot_suffix}_en')
 
             ### use the maximum of the two errors
-            used_err_colvalue = np.nanmax([sexcat[err_colname].data, sexcat[en_colname].data], axis=0)
-            
+            err = sexcat[err_colname].data
+            en = sexcat[en_colname].data
+            used_err_colvalue = np.nanmax([err, en], axis=0)
+
             filt = colname.split('_')[0]
             f = sexcat[colname].data
             e = used_err_colvalue
@@ -73,8 +75,9 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
 
             ### add uncertainty floor: 0.05
             e = np.where( e < 0.05 * f , 0.05 *  f , e)
-            e[f == 0] = np.nan
-            f[f == 0] = np.nan
+            nan_flg = np.isnan(f) | np.isnan(en) | (f == 0)  
+            e[nan_flg] = np.nan
+            f[nan_flg] = np.nan
 
             eazy_tab['f_{0}'.format(filt)] = np.nan_to_num(f, nan = -999999., posinf=-999999., neginf=-999999.)
             eazy_tab['e_{0}'.format(filt)] = np.nan_to_num(e, nan = -999999., posinf=-999999., neginf=-999999.)
@@ -84,11 +87,11 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
                 eazy_tab['f_{0}'.format(filt)] = eazy_tab['f_{0}'.format(filt)].filled(-999999.)
             if hasattr(eazy_tab['e_{0}'.format(filt)], 'filled'):
                 eazy_tab['e_{0}'.format(filt)] = eazy_tab['e_{0}'.format(filt)].filled(-999999.)
- 
+
     eazy_catname = os.path.join(output_dir, f'{rootname}_{phot_suffix}.eazy.cat')
     eazy_tab.write(eazy_catname, format='ascii', overwrite=True)
 
-
+    
     # ----------------- Run EAZY -----------------
     # generate the template file based on Hailine et al. 2023
     template_seds = glob.glob(os.path.join(template_Hainline_path, '*.sed') )
@@ -135,13 +138,20 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
     #'templates/sfhz/corr_sfhz_13.param'   
     #'templates/template_Hainline/template_Hainline.param'
 
+    ### Error templates
     params['TEMP_ERR_FILE'] = os.path.join(eazy_photz_path,'templates/TEMPLATE_ERROR.v2.0.zfourge')
-    # 'templates/TEMPLATE_ERROR.eazy_v1.0'
+    params['TEMP_ERR_A2'] = 1.0 # important !!!
+    
+    #'templates/TEMPLATE_ERROR.eazy_v1.0'
     #'templates/TEMPLATE_ERROR.v2.0.zfourge'
     #'templates/template_error_cosmos2020.txt'
+ 
     
-    params['MW_EBV'] = eazy.utils.get_irsa_dust( ra_center, dec_center) # center of the field
+    mw_ebv = eazy.utils.get_irsa_dust( ra_center, dec_center)  # center of the field
+    params['MW_EBV'] = mw_ebv
     params['CAT_HAS_EXTCORR'] = 'n'
+
+    params['ADD_CGM'] = 'n' # turn off the LyA absorption model
 
     ## Input Files
     params['CATALOG_FILE'] = eazy_catname
@@ -150,6 +160,7 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
     params['MAIN_OUTPUT_FILE'] = f'{rootname}_{phot_suffix}.eazy'
     params['PRINT_ERRORS'] = 'y'
     params['NOT_OBS_THRESHOLD'] = -90
+    params['SYS_ERR'] = 0.0 # already set the uncertainty floor in the input catalog
 
     ## Redshift / Mag prior
     params['APPLY_PRIOR'] = 'n'
@@ -162,17 +173,81 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
     params['Z_MAX'] = 30              
     params['Z_STEP'] = 0.01
 
-
-
+    
     translate_file = '/home/lxj/magnif_eazy/eazy_translate.txt' # https://eazy-py.readthedocs.io/en/latest/eazy/filters.html
 
+    ### here is Yoshi's setting
+    Yoshi_params = {
+    "VERBOSITY": 1.0,
+    "FILTERS_RES": "FILTER.RES.latest",
+    "FILTER_FORMAT": 1.0,
+    "SMOOTH_FILTERS": "n",
+    "SMOOTH_SIGMA": 100.0,
+    "TEMPLATES_FILE": os.path.join(eazy_photz_path,'templates/template_Hainline/template_Hainline.param'),
+    "TEMPLATE_COMBOS": "a",
+    "NMF_TOLERANCE": 0.0001,
+    "WAVELENGTH_FILE": "templates/uvista_nmf/lambda.def",
+    "TEMP_ERR_FILE": os.path.join(eazy_photz_path,'templates/TEMPLATE_ERROR.v2.0.zfourge'),
+    "TEMP_ERR_A2": 1.0,
+    "SYS_ERR": 0.05,
+    "APPLY_IGM": "y",
+    "IGM_SCALE_TAU": 1.0,
+    "SCALE_2175_BUMP": 0.0,
+    "TEMPLATE_SMOOTH": 0.0,
+    "RESAMPLE_WAVE": "None",
+    "MW_EBV": 0.0354,
+    "CAT_HAS_EXTCORR": "n",
+    "DUMP_TEMPLATE_CACHE": "n",
+    "USE_TEMPLATE_CACHE": "n",
+    "CACHE_FILE": "photz.tempfilt",
+    "CATALOG_FILE": eazy_catname,
+    "CATALOG_FORMAT": "ascii",
+    "MAGNITUDES": "n",
+    "NOT_OBS_THRESHOLD": -90.0,
+    "N_MIN_COLORS": 5.0,
+    "ARRAY_NBITS": 32.0,
+    "OUTPUT_DIRECTORY": output_dir,
+    "MAIN_OUTPUT_FILE": f'{rootname}_{phot_suffix}.eazy',
+    "PRINT_ERRORS": "y",
+    "CHI2_SCALE": 1.0,
+    "VERBOSE_LOG": "y",
+    "OBS_SED_FILE": "n",
+    "TEMP_SED_FILE": "n",
+    "POFZ_FILE": "n",
+    "BINARY_OUTPUT": "y",
+    "APPLY_PRIOR": "n",
+    "PRIOR_FILE": "templates/prior_F160W_TAO.dat",
+    "PRIOR_FILTER": 366.0,
+    "PRIOR_ABZP": 31.4,
+    "PRIOR_FLOOR": 0.01,
+    "FIX_ZSPEC": "n",
+    "Z_MIN": 0.01,
+    "Z_MAX": 30.0,
+    "Z_STEP": 0.01,
+    "Z_STEP_TYPE": 1.0,
+    "GET_ZP_OFFSETS": "n",
+    "ZP_OFFSET_TOL": 0.0001,
+    "REST_FILTERS": "---",
+    "RF_PADDING": 1000.0,
+    "RF_ERRORS": "n",
+    "Z_COLUMN": "z_peak",
+    "USE_ZSPEC_FOR_REST": "y",
+    "READ_ZBIN": "n",
+    "ADD_CGM": "n",
+    "H0": 70.0,
+    "OMEGA_M": 0.3,
+    "OMEGA_L": 0.7}
 
     # RUN EAZY
     ez = eazy.photoz.PhotoZ(param_file=None, translate_file=translate_file, zeropoint_file=None, 
                             params=params, load_prior=False, load_products=False)
+    
+    ### save the parameter file
+    param_file = os.path.join(output_dir, f'{rootname}_{phot_suffix}.param')
+    ez.param.write(param_file)
 
     # Photometric zeropoint offsets
-    NITER = 5
+    NITER = 0 # turn off the iteration
     NBIN = np.minimum(ez.NOBJ//100, 180)
     ez.param.params['VERBOSITY'] = 1.
 
@@ -192,7 +267,7 @@ for phot_suffix in ['CIRC1', 'KRON_S']:
                                 )
 
     # Turn off error corrections derived above
-    ez.set_sys_err(positive=False)
+    ez.set_sys_err(positive=True)
 
     # fit_parallel renamed to fit_catalog 14 May 2021
     ez.fit_catalog(ez.idx, n_proc=20)

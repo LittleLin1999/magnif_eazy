@@ -111,8 +111,12 @@ def show_eazy_result(id, save_dir=None, save_suffix='EAZY',
     xlim = wv_obs.min() - 0.5, wv_obs.max() + 0.5
     flg  = ((wv_template > xlim[0]) & (wv_template < xlim[1]))
     ax.plot(wv_template[flg], f_template[flg], color='lightblue',   lw=1.)
-    ylim = np.nanmin(fobs) -1, np.nanmax(fobs) + 1
-    ax.set_ylim(ylim)
+    try:
+        ylim = np.nanmin(fobs) -1, np.nanmax(fobs) + 1
+        ax.set_ylim(ylim)
+    except ValueError:
+        print('NO VALID YLIMIT for source %d'%id)
+        pass
     ax.margins(x=0, y=0)
     ax.invert_yaxis()
     _ = ax.set_ylabel('AB Magnitude')
@@ -228,15 +232,15 @@ if __name__ == "__main__":
 
  
     field = 'M0416'
-    image_fname_func = lambda filt: f'/data/sapphires/all_mosaics/4750/4750_{filt.upper()}_v03_sci.fits'
+    image_fname_func = lambda filt: f'/data/sapphires/all_mosaics/4750/4750_{filt.upper()}_v05_sci.fits'
     
-    eazy_hdf5 ='/home/lxj/data/SAPPHIRE_EAZY/4750_v03/4750_v03_CIRC1.eazy.h5'
-    phot_cat = '/data/sapphires/catalogs/4750_v03_merged_phot.fits'
+    eazy_hdf5 ='/home/lxj/data/SAPPHIRE_EAZY/4750_v052/4750_v052_CIRC1.eazy.h5'
+    phot_cat = '/data/sapphires/catalogs/4750_v052_merged_phot.fits'
     img_path = '/data/sapphires/all_mosaics/4750/'
-    save_dir = '/home/lxj/data/SAPPHIRE_EAZY/4750_v03/plots/'
-    save_suffix = 'SAPPIRES_4750_v03'
+    save_dir = '/home/lxj/data/SAPPHIRE_EAZY/4750_v052/plots/'
+    save_suffix = 'SAPPIRES_4750_v052'
 
-    phot_ver = 'v03'
+    phot_ver = 'v052'
     phot_type = 'CIRC1'
 
 
@@ -308,5 +312,8 @@ if __name__ == "__main__":
     os.makedirs(save_dir, exist_ok=True)
     show_ez = partial(show_eazy_result, fieldname=field, save_dir=save_dir, save_suffix=save_suffix,phot_ver=phot_ver, 
     phot_type=phot_type)
-    with multiprocessing.Pool(20) as pool:
+    with multiprocessing.Pool(5) as pool:
         pool.map(show_ez, phot['ID'])
+        
+
+    print('Done')
